@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Comments Plugin - UI Preview</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      height: 100vh;
+      font-family: Inter, -apple-system, sans-serif;
+      background: #1e1e1e;
+    }
+
+    /* Plugin frame */
+    .plugin-frame {
+      width: 360px;
+      height: 520px;
+      border: 2px solid #444;
+      border-radius: 8px;
+      overflow: hidden;
+      margin: 40px;
+      background: #fff;
+    }
+
+    .plugin-frame iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+
+    /* Control panel */
+    .controls {
+      flex: 1;
+      padding: 24px;
+      color: #ddd;
+      overflow-y: auto;
+    }
+
+    .controls h2 {
+      color: #fff;
+      margin: 0 0 16px;
+      font-size: 18px;
+    }
+
+    .controls h3 {
+      color: #aaa;
+      margin: 20px 0 8px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 8px 16px;
+      margin: 4px;
+      border: 1px solid #555;
+      border-radius: 6px;
+      background: #2a2a2a;
+      color: #ddd;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.15s;
+    }
+
+    .btn:hover {
+      background: #3a3a3a;
+      border-color: #0d99ff;
+      color: #fff;
+    }
+
+    .log {
+      margin-top: 20px;
+      padding: 12px;
+      background: #111;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 11px;
+      max-height: 300px;
+      overflow-y: auto;
+      color: #888;
+    }
+
+    .log-entry {
+      padding: 2px 0;
+      border-bottom: 1px solid #222;
+    }
+
+    .log-entry.in { color: #0d99ff; }
+    .log-entry.out { color: #14ae5c; }
+    .log-entry.info { color: #f5a623; }
+  </style>
+</head>
+<body>
+  <div class="plugin-frame">
+    <iframe id="plugin-ui" srcdoc=""></iframe>
+  </div>
+
+  <div class="controls">
+    <h2>Plugin UI Tester</h2>
+    <p style="color:#888;font-size:12px;margin-bottom:16px">
+      This page loads the plugin UI and lets you simulate Figma messages.
+      Open the browser console for more detail.
+    </p>
+
+    <h3>Selection</h3>
+    <button class="btn" onclick="simulateSelect('42:1', 'Login Button')">Select "Login Button"</button>
+    <button class="btn" onclick="simulateSelect('42:2', 'Header Frame')">Select "Header Frame"</button>
+    <button class="btn" onclick="simulateSelect('42:3', 'Icon Star')">Select "Icon Star"</button>
+    <button class="btn" onclick="simulateDeselect()">Clear Selection</button>
+
+    <h3>Simulate Plugin Responses</h3>
+    <button class="btn" onclick="addSampleComment()">Add Sample Comment</button>
+    <button class="btn" onclick="addSampleWithReplies()">Add Comment + Replies</button>
+    <button class="btn" onclick="loadMultipleComments()">Load 5 Comments</button>
+    <button class="btn" onclick="simulateError()">Simulate Error</button>
+    <button class="btn" onclick="setUserName()">Set User Name "Designer1"</button>
+
+    <h3>Message Log</h3>
+    <div class="log" id="log"></div>
+  </div>
+
+  <script>
+    const iframe = document.getElementById('plugin-ui');
+    const log = document.getElementById('log');
+    let commentIdCounter = 0;
+
+    function logMessage(direction, msg) {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry ' + direction;
+      const prefix = direction === 'in' ? 'TO UI  ' : direction === 'out' ? 'FROM UI' : 'INFO   ';
+      entry.textContent = prefix + ' | ' + JSON.stringify(msg);
+      log.prepend(entry);
+    }
+
+    // Load the built UI HTML into the iframe
+    fetch('../dist/ui.html')
+      .then(r => r.text())
+      .then(html => {
+        iframe.srcdoc = html;
+        logMessage('info', 'UI loaded');
+      })
+      .catch(err => {
+        logMessage('info', 'Failed to load dist/ui.html: ' + err.message);
+        // Try relative to current file
+        log.textContent = 'Error: Run "npm run build" first, then open this file.';
+      });
+
+    // Listen for messages FROM the UI
+    window.addEventListener('message', (event) => {
+      const msg = event.data?.pluginMessage;
+      if (!msg) return;
+
+      logMessage('out', msg);
+
+      // Auto-respond to certain messages
+      switch (msg.type) {
+        case 'init':
+          sendToUI({ type: 'comments-loaded', comments: [] });
+          sendToUI({ type: 'user-name', name: 'Test Designer' });
+          sendToUI({ type: 'selection-changed', nodeId: null, nodeName: null });
+          break;
+
+        case 'add-comment':
+          const newComment = makeComment(msg.nodeId, msg.nodeName, msg.text);
+          sendToUI({ type: 'comment-added', comment: newComment });
+          break;
+
+        case 'reply-to-comment':
+          logMessage('info', 'Reply sent to comment ' + msg.commentId);
+          break;
+
+        case 'resolve-comment':
+          logMessage('info', 'Comment resolved: ' + msg.commentId);
+          break;
+
+        case 'delete-comment':
+          sendToUI({ type: 'comment-deleted', commentId: msg.commentId });
+          break;
+
+        case 'navigate-to-node':
+          logMessage('info', 'Navigate to node: ' + msg.nodeId);
+          break;
+
+        case 'set-user-name':
+          logMessage('info', 'User name set to: ' + msg.name);
+          break;
+      }
+    });
+
+    function sendToUI(msg) {
+      logMessage('in', msg);
+      iframe.contentWindow.postMessage({ pluginMessage: msg }, '*');
+    }
+
+    function makeComment(nodeId, nodeName, text, author) {
+      commentIdCounter++;
+      return {
+        id: 'c' + commentIdCounter,
+        nodeId: nodeId || '42:1',
+        nodeName: nodeName || 'Element',
+        author: author || 'Test Designer',
+        text: text || 'Sample comment',
+        timestamp: Date.now(),
+        resolved: false,
+        replies: [],
+        pinX: 100,
+        pinY: 200,
+      };
+    }
+
+    // Control functions
+    function simulateSelect(nodeId, nodeName) {
+      sendToUI({ type: 'selection-changed', nodeId, nodeName });
+    }
+
+    function simulateDeselect() {
+      sendToUI({ type: 'selection-changed', nodeId: null, nodeName: null });
+    }
+
+    function addSampleComment() {
+      const c = makeComment('42:1', 'Login Button', 'This needs more contrast');
+      sendToUI({ type: 'comment-added', comment: c });
+    }
+
+    function addSampleWithReplies() {
+      commentIdCounter++;
+      const c = {
+        id: 'c' + commentIdCounter,
+        nodeId: '42:2',
+        nodeName: 'Header Frame',
+        author: 'Alice',
+        text: 'Should we align this to the grid?',
+        timestamp: Date.now() - 3600000,
+        resolved: false,
+        replies: [
+          { id: 'r1', author: 'Bob', text: 'Yes, 8px grid works best', timestamp: Date.now() - 1800000 },
+          { id: 'r2', author: 'Alice', text: 'Done, updated in v2', timestamp: Date.now() - 600000 },
+        ],
+        pinX: 200,
+        pinY: 300,
+      };
+      sendToUI({ type: 'comment-added', comment: c });
+    }
+
+    function loadMultipleComments() {
+      const comments = [
+        makeComment('42:1', 'Login Button', 'Fix hover state color', 'Alice'),
+        makeComment('42:2', 'Header Frame', 'Padding should be 16px', 'Bob'),
+        makeComment('42:3', 'Icon Star', 'Use filled variant', 'Charlie'),
+        { ...makeComment('42:1', 'Login Button', 'Old issue - fixed', 'Alice'), resolved: true },
+        makeComment('42:2', 'Header Frame', 'Font weight should be 600', 'Diana'),
+      ];
+      sendToUI({ type: 'comments-loaded', comments });
+    }
+
+    function simulateError() {
+      sendToUI({ type: 'error', message: 'Element no longer exists in the document' });
+    }
+
+    function setUserName() {
+      sendToUI({ type: 'user-name', name: 'Designer1' });
+    }
+  </script>
+</body>
+</html>
