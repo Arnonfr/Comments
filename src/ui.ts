@@ -19,6 +19,7 @@ const commentCount = document.getElementById("comment-count") as HTMLSpanElement
 const settingsPanel = document.getElementById("settings-panel") as HTMLDivElement;
 const settingsToggle = document.getElementById("settings-toggle") as HTMLButtonElement;
 const userNameInput = document.getElementById("user-name-input") as HTMLInputElement;
+const errorToast = document.getElementById("error-toast") as HTMLDivElement;
 
 // Send message to plugin
 function sendToPlugin(msg: MessageToPlugin): void {
@@ -38,11 +39,30 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
-// Escape HTML
+// Escape HTML for text content
 function escapeHtml(text: string): string {
   const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
+}
+
+// Escape for use in HTML attributes (handles quotes)
+function escapeAttr(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// Show error toast
+function showError(message: string): void {
+  errorToast.textContent = message;
+  errorToast.classList.add("visible");
+  setTimeout(() => {
+    errorToast.classList.remove("visible");
+  }, 3000);
 }
 
 // Get filtered comments
@@ -64,7 +84,6 @@ function render(): void {
 
   if (filtered.length === 0) {
     emptyState.style.display = "flex";
-    // Clear existing comment cards but keep empty state
     const cards = commentsList.querySelectorAll(".comment-card");
     cards.forEach((c) => c.remove());
     return;
@@ -72,7 +91,6 @@ function render(): void {
 
   emptyState.style.display = "none";
 
-  // Build HTML
   let html = "";
   for (const c of filtered) {
     const resolvedClass = c.resolved ? " resolved" : "";
@@ -97,8 +115,8 @@ function render(): void {
     const replyInput =
       replyingTo === c.id
         ? `<div class="reply-input-row">
-            <input class="reply-input" id="reply-input-${c.id}" placeholder="Write a reply..." autofocus />
-            <button class="reply-submit" data-reply-submit="${c.id}">Reply</button>
+            <input class="reply-input" id="reply-input-${escapeAttr(c.id)}" placeholder="Write a reply..." />
+            <button class="reply-submit" data-reply-submit="${escapeAttr(c.id)}">Reply</button>
           </div>`
         : "";
 
@@ -106,7 +124,7 @@ function render(): void {
     const resolveAction = c.resolved ? "unresolve" : "resolve";
 
     html += `
-      <div class="comment-card${resolvedClass}" data-comment-id="${c.id}">
+      <div class="comment-card${resolvedClass}" data-comment-id="${escapeAttr(c.id)}">
         <div class="comment-header">
           <span class="comment-author">${escapeHtml(c.author)}</span>
           <div class="comment-meta">
@@ -114,7 +132,7 @@ function render(): void {
             ${resolvedBadge}
           </div>
         </div>
-        <div class="comment-node" data-navigate="${c.nodeId}">
+        <div class="comment-node" data-navigate="${escapeAttr(c.nodeId)}">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
           ${escapeHtml(c.nodeName)}
         </div>
@@ -122,26 +140,27 @@ function render(): void {
         ${repliesHtml}
         ${replyInput}
         <div class="comment-actions">
-          <button class="action-btn" data-action="reply" data-id="${c.id}">Reply</button>
-          <button class="action-btn" data-action="${resolveAction}" data-id="${c.id}">${resolveLabel}</button>
-          <button class="action-btn danger" data-action="delete" data-id="${c.id}">Delete</button>
+          <button class="action-btn" data-action="reply" data-id="${escapeAttr(c.id)}">Reply</button>
+          <button class="action-btn" data-action="${resolveAction}" data-id="${escapeAttr(c.id)}">${resolveLabel}</button>
+          <button class="action-btn danger" data-action="delete" data-id="${escapeAttr(c.id)}">Delete</button>
         </div>
       </div>`;
   }
 
-  // Keep empty state element, replace card content
+  // Replace card content
   const cards = commentsList.querySelectorAll(".comment-card");
   cards.forEach((c) => c.remove());
   commentsList.insertAdjacentHTML("beforeend", html);
 
-  // Focus reply input if open
+  // Focus reply input if open (use programmatic event binding, not stacking)
   if (replyingTo) {
     const replyInputEl = document.getElementById(
       `reply-input-${replyingTo}`
     ) as HTMLInputElement | null;
     if (replyInputEl) {
       replyInputEl.focus();
-      replyInputEl.addEventListener("keydown", (e) => {
+      // Use a single handler via onkeydown to avoid listener stacking
+      replyInputEl.onkeydown = (e: KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           submitReply(replyingTo!);
@@ -150,7 +169,7 @@ function render(): void {
           replyingTo = null;
           render();
         }
-      });
+      };
     }
   }
 }
@@ -206,6 +225,7 @@ submitBtn.addEventListener("click", () => {
   });
 
   commentInput.value = "";
+  commentInput.style.height = "auto";
   updateSubmitState();
 });
 
@@ -303,7 +323,7 @@ commentsList.addEventListener("click", (e) => {
 });
 
 // Handle messages from plugin
-window.onmessage = (event: MessageEvent) => {
+window.addEventListener("message", (event: MessageEvent) => {
   const msg = event.data.pluginMessage as MessageToUI;
   if (!msg) return;
 
@@ -340,10 +360,10 @@ window.onmessage = (event: MessageEvent) => {
       break;
 
     case "error":
-      console.error("Plugin error:", msg.message);
+      showError(msg.message);
       break;
   }
-};
+});
 
 // Init
 sendToPlugin({ type: "init" });

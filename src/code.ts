@@ -6,11 +6,11 @@ const USER_NAME_KEY = "comments-plugin-username";
 figma.showUI(__html__, { width: 360, height: 520, themeColors: true });
 
 function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+  return Date.now().toString(36) + Math.random().toString(36).substring(2, 11);
 }
 
-async function loadComments(): Promise<Comment[]> {
-  const data = await figma.clientStorage.getAsync(STORAGE_KEY);
+function loadComments(): Comment[] {
+  const data = figma.root.getPluginData(STORAGE_KEY);
   if (!data) return [];
   try {
     return JSON.parse(data) as Comment[];
@@ -19,13 +19,14 @@ async function loadComments(): Promise<Comment[]> {
   }
 }
 
-async function saveComments(comments: Comment[]): Promise<void> {
-  await figma.clientStorage.setAsync(STORAGE_KEY, JSON.stringify(comments));
+function saveComments(comments: Comment[]): void {
+  figma.root.setPluginData(STORAGE_KEY, JSON.stringify(comments));
 }
 
 async function getUserName(): Promise<string> {
-  const name = await figma.clientStorage.getAsync(USER_NAME_KEY);
-  return name || figma.currentPage.parent?.name || "User";
+  const stored = await figma.clientStorage.getAsync(USER_NAME_KEY);
+  if (stored) return stored;
+  return figma.currentUser?.name || "User";
 }
 
 async function setUserName(name: string): Promise<void> {
@@ -37,20 +38,38 @@ function sendToUI(msg: MessageToUI): void {
 }
 
 function getNodeCenter(node: SceneNode): { x: number; y: number } {
+  const box = node.absoluteBoundingBox;
+  if (!box) return { x: 0, y: 0 };
   return {
-    x: node.absoluteBoundingBox
-      ? node.absoluteBoundingBox.x + node.absoluteBoundingBox.width / 2
-      : 0,
-    y: node.absoluteBoundingBox
-      ? node.absoluteBoundingBox.y + node.absoluteBoundingBox.height / 2
-      : 0,
+    x: box.x + box.width / 2,
+    y: box.y + box.height / 2,
   };
+}
+
+function findNodeAcrossPages(nodeId: string): SceneNode | null {
+  // getNodeById searches all pages
+  const node = figma.getNodeById(nodeId);
+  if (!node) return null;
+  // Ensure it's a SceneNode (not DocumentNode or PageNode used as target)
+  if ("absoluteBoundingBox" in node || "x" in node) {
+    return node as SceneNode;
+  }
+  return null;
+}
+
+function getNodePage(node: BaseNode): PageNode | null {
+  let current: BaseNode | null = node;
+  while (current) {
+    if (current.type === "PAGE") return current as PageNode;
+    current = current.parent;
+  }
+  return null;
 }
 
 async function handleMessage(msg: MessageToPlugin): Promise<void> {
   switch (msg.type) {
     case "init": {
-      const comments = await loadComments();
+      const comments = loadComments();
       sendToUI({ type: "comments-loaded", comments });
       const userName = await getUserName();
       sendToUI({ type: "user-name", name: userName });
@@ -69,7 +88,7 @@ async function handleMessage(msg: MessageToPlugin): Promise<void> {
     }
 
     case "load-comments": {
-      const comments = await loadComments();
+      const comments = loadComments();
       sendToUI({ type: "comments-loaded", comments });
       break;
     }
@@ -80,8 +99,8 @@ async function handleMessage(msg: MessageToPlugin): Promise<void> {
     }
 
     case "add-comment": {
-      const comments = await loadComments();
-      const node = figma.getNodeById(msg.nodeId) as SceneNode | null;
+      const comments = loadComments();
+      const node = findNodeAcrossPages(msg.nodeId);
       const pos = node ? getNodeCenter(node) : { x: 0, y: 0 };
 
       const newComment: Comment = {
@@ -98,14 +117,14 @@ async function handleMessage(msg: MessageToPlugin): Promise<void> {
       };
 
       comments.unshift(newComment);
-      await saveComments(comments);
+      saveComments(comments);
       sendToUI({ type: "comment-added", comment: newComment });
       figma.notify(`Comment added on "${msg.nodeName}"`);
       break;
     }
 
     case "reply-to-comment": {
-      const comments = await loadComments();
+      const comments = loadComments();
       const comment = comments.find((c) => c.id === msg.commentId);
       if (!comment) {
         sendToUI({ type: "error", message: "Comment not found" });
@@ -119,13 +138,13 @@ async function handleMessage(msg: MessageToPlugin): Promise<void> {
         timestamp: Date.now(),
       });
 
-      await saveComments(comments);
+      saveComments(comments);
       sendToUI({ type: "comment-updated", comment });
       break;
     }
 
     case "resolve-comment": {
-      const comments = await loadComments();
+      const comments = loadComments();
       const comment = comments.find((c) => c.id === msg.commentId);
       if (!comment) {
         sendToUI({ type: "error", message: "Comment not found" });
@@ -133,14 +152,14 @@ async function handleMessage(msg: MessageToPlugin): Promise<void> {
       }
 
       comment.resolved = true;
-      await saveComments(comments);
+      saveComments(comments);
       sendToUI({ type: "comment-updated", comment });
       figma.notify("Comment resolved");
       break;
     }
 
     case "unresolve-comment": {
-      const comments = await loadComments();
+      const comments = loadComments();
       const comment = comments.find((c) => c.id === msg.commentId);
       if (!comment) {
         sendToUI({ type: "error", message: "Comment not found" });
@@ -148,23 +167,28 @@ async function handleMessage(msg: MessageToPlugin): Promise<void> {
       }
 
       comment.resolved = false;
-      await saveComments(comments);
+      saveComments(comments);
       sendToUI({ type: "comment-updated", comment });
       break;
     }
 
     case "delete-comment": {
-      let comments = await loadComments();
+      let comments = loadComments();
       comments = comments.filter((c) => c.id !== msg.commentId);
-      await saveComments(comments);
+      saveComments(comments);
       sendToUI({ type: "comment-deleted", commentId: msg.commentId });
       figma.notify("Comment deleted");
       break;
     }
 
     case "navigate-to-node": {
-      const node = figma.getNodeById(msg.nodeId) as SceneNode | null;
+      const node = findNodeAcrossPages(msg.nodeId);
       if (node) {
+        // Switch page if needed
+        const page = getNodePage(node);
+        if (page && page !== figma.currentPage) {
+          figma.currentPage = page;
+        }
         figma.currentPage.selection = [node];
         figma.viewport.scrollAndZoomIntoView([node]);
       } else {
