@@ -1,0 +1,22 @@
+{
+  "name": "comments-figma-plugin",
+  "version": "1.0.0",
+  "description": "A Figma plugin for adding and managing comments on design elements",
+  "scripts": {
+    "build": "webpack --mode=production",
+    "watch": "webpack --mode=development --watch",
+    "dev": "webpack --mode=development"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.100.0",
+    "@types/html-webpack-plugin": "^3.2.9",
+    "css-loader": "^6.8.1",
+    "html-webpack-plugin": "^5.5.3",
+    "inline-chunk-html-plugin": "^1.1.1",
+    "style-loader": "^3.3.3",
+    "ts-loader": "^9.4.4",
+    "typescript": "^5.1.6",
+    "webpack": "^5.88.2",
+    "webpack-cli": "^5.1.4"
+  }
+}
